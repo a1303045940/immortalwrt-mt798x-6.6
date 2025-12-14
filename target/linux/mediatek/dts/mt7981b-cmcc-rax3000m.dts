@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /*
  * CMCC RAX3000M/RAX3000Me (AN8855 Version)
- * 基于官方 MT7981B 和 AN8855 适配
+ * 修复：WiFi EEPROM 读取、LED 引脚、交换机配置
  */
 
 /dts-v1/;
@@ -13,18 +13,18 @@
 #include "mt7981b.dtsi"
 
 / {
-	model = "CMCC RAX3000M";
+	model = "CMCC RAX3000M/RAX3000Me (AN8855)";
 	compatible = "cmcc,rax3000m", "mediatek,mt7981";
 
 	aliases {
+		serial0 = &uart0;
 		led-boot = &red_led;
 		led-failsafe = &red_led;
 		led-running = &green_led;
 		led-upgrade = &green_led;
-		serial0 = &uart0;
 	};
 
-	chosen: chosen {
+	chosen {
 		bootargs-override = "root=/dev/fit0 rootwait";
 		stdout-path = "serial0:115200n8";
 	};
@@ -51,6 +51,7 @@
 		};
 	};
 
+	/* RAX3000M 的 LED 定义 */
 	gpio-leds {
 		compatible = "gpio-leds";
 
@@ -74,11 +75,10 @@
 	};
 };
 
-/* 以太网 MAC 配置 */
 &eth {
 	status = "okay";
 
-	/* gmac0 连接到 AN8855 的 CPU Port (Port 5) */
+	/* gmac0 连接到 AN8855 的 CPU 口 (Port 5) */
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
@@ -90,29 +90,16 @@
 			pause;
 		};
 	};
-
-	/* gmac1 保留默认配置 (通常未直接连接外部PHY，或用于WAN，取决于具体布线) */
-	/* 在全交换机模式下，这里通常不需改动，或者如果用不到可以设为 disabled */
-	gmac1: mac@1 {
-		compatible = "mediatek,eth-mac";
-		reg = <1>;
-		phy-mode = "gmii";
-		phy-handle = <&int_gbe_phy>;
-	};
 };
 
-/* MDIO 总线配置 - 这里只保留 AN8855 */
 &mdio_bus {
-	/* 移除 MT7531 节点 */
-	
-	/* AN8855 MFD 主节点 */
+	/* 彻底移除 MT7531 节点，只保留 AN8855 */
 	mfd: mfd@1 {
 		compatible = "airoha,an8855-mfd";
 		reg = <1>;
 	};
 };
 
-/* AN8855 详细配置 */
 &mfd {
 	efuse {
 		compatible = "airoha,an8855-efuse";
@@ -123,6 +110,7 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
+			/* 交换机校准参数，保留默认 */
 			shift_sel_port0_tx_a: shift-sel-port0-tx-a@c { reg = <0x0c 0x4>; };
 			shift_sel_port0_tx_b: shift-sel-port0-tx-b@10 { reg = <0x10 0x4>; };
 			shift_sel_port0_tx_c: shift-sel-port0-tx-c@14 { reg = <0x14 0x4>; };
@@ -145,11 +133,10 @@
 		};
 	};
 
-	/* 启用 AN8855 交换机功能 */
 	ethernet-switch {
 		compatible = "airoha,an8855-switch";
-		status = "okay";
-
+		/* 确保这里是 okay */
+		status = "okay"; 
 		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
 		airoha,ext-surge;
 
@@ -185,7 +172,6 @@
 				phy-handle = <&internal_phy4>;
 			};
 
-			/* CPU 口配置，对应 AN8855 的 Port 5 */
 			port@5 {
 				reg = <5>;
 				label = "cpu";
@@ -236,8 +222,120 @@
 	};
 };
 
-&uart0 { status = "okay"; };
-&usb_phy { status = "okay"; };
-&watchdog { status = "okay"; };
-&wifi { status = "okay"; };
-&xhci { status = "okay"; };
+&spi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_flash_pins>;
+	status = "okay";
+
+	spi_nand: flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+
+		spi-cal-enable;
+		spi-cal-mode = "read-data";
+		spi-cal-datalen = <7>;
+		spi-cal-data = /bits/ 8 <0x53 0x50 0x49 0x4e 0x41 0x4e 0x44>;
+		spi-cal-addrlen = <5>;
+		spi-cal-addr = /bits/ 32 <0x0 0x0 0x0 0x0 0x0>;
+
+		spi-max-frequency = <52000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
+
+		/* * 重要：这里改回了 RAX3000M 的标准分区表 
+		 * 只有分区表对了，系统才能找到 Factory 分区里的 WiFi 数据
+		 */
+		partitions: partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "BL2";
+				reg = <0x00 0x100000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "u-boot-env";
+				reg = <0x100000 0x80000>;
+			};
+
+			/* Factory 分区，存放 MAC 地址和 WiFi 校准数据 */
+			factory: partition@180000 {
+				label = "Factory";
+				reg = <0x180000 0x200000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					eeprom_factory_0: eeprom@0 {
+						reg = <0x0 0x1000>;
+					};
+
+					macaddr_factory_4: macaddr@4 {
+						compatible = "mac-base";
+						reg = <0x4 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+
+			partition@380000 {
+				label = "FIP";
+				reg = <0x380000 0x200000>;
+				read-only;
+			};
+
+			partition@580000 {
+				label = "ubi";
+				reg = <0x580000 0x7600000>; 
+			};
+		};
+	};
+};
+
+&pio {
+	spi0_flash_pins: spi0-pins {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+
+		conf-pu {
+			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
+			drive-strength = <MTK_DRIVE_8mA>;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_11>;
+		};
+
+		conf-pd {
+			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
+			drive-strength = <MTK_DRIVE_8mA>;
+			bias-pull-down = <MTK_PUPD_SET_R1R0_11>;
+		};
+	};
+};
+
+&wifi {
+	status = "okay";
+	/* * 这里引用 Factory 分区里的 eeprom_factory_0 
+	 * 之前 WiFi 不工作就是因为分区表不对，导致找不到这个位置
+	 */
+	nvmem-cells = <&eeprom_factory_0>;
+	nvmem-cell-names = "eeprom";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&xhci {
+	status = "okay";
+};
