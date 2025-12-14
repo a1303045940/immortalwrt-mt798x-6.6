@@ -12,7 +12,7 @@
 #include "mt7981b.dtsi"
 
 / {
-	model = "CMCC RAX3000M (AN8855)";
+	model = "CMCC RAX3000M";
 	compatible = "cmcc,rax3000m", "mediatek,mt7981";
 
 	aliases {
