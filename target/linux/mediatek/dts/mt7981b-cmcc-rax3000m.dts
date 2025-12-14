@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /*
- * CMCC RAX3000M (AN8855AE) - main DTS
- * NAND 分区、factory、Wi-Fi EEPROM 等通过 mt7981b-cmcc-rax3000m-nand.dtso 提供
+ * CMCC RAX3000M/RAX3000Me (NAND) - main DTS (user modified)
+ * 目标：在不动 Wi-Fi/分区的前提下，把网口先救活（MT7531 DSA）
  */
 
 /dts-v1/;
@@ -13,7 +13,7 @@
 #include "mt7981b.dtsi"
 
 / {
-	model = "CMCC RAX3000M";
+	model = "CMCC RAX3000M/RAX3000Me (test)";
 	compatible = "cmcc,rax3000m", "mediatek,mt7981";
 
 	aliases {
@@ -74,10 +74,11 @@
 	};
 };
 
-/* 以太网 MAC：保留 RAX3000M 原有结构，gmac0 走 2.5G CPU 口连 AN8855 */
+/* 以太网 MAC */
 &eth {
 	status = "okay";
 
+	/* eth0 -> 2.5G CPU 口 */
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
@@ -90,6 +91,7 @@
 		};
 	};
 
+	/* eth1 -> SoC internal gbe phy（可先保留） */
 	gmac1: mac@1 {
 		compatible = "mediatek,eth-mac";
 		reg = <1>;
@@ -98,8 +100,23 @@
 	};
 };
 
-/* 在 MDIO 总线上挂 AN8855 MFD（地址按 AX3000T 写成 1） */
+/*
+ * 关键修改 1：在 MDIO 总线上加 MT7531（地址 0x1f=31）
+ * 这能让 DSA 生成 lan/wan 口（你之前“能用网口”的 DTS 就是这套结构）
+ */
 &mdio_bus {
+	switch: switch@1f {
+		compatible = "mediatek,mt7531";
+		reg = <31>;
+		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
+
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&pio>;
+		interrupts = <38 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	/* 原有：AN8855 MFD（先保留，后面把它的 DSA switch 禁用） */
 	mfd: mfd@1 {
 		compatible = "airoha,an8855-mfd";
 		reg = <1>;
@@ -107,10 +124,53 @@
 };
 
 /*
- * AN8855 子节点：
- * - efuse：eFuse 校准 nvmem（偏移照 AX3000T AN8855 版本）
- * - ethernet-switch：DSA 交换机端口
- * - mdio：内部 PHY + 校准绑定
+ * 关键修改 2：补上 MT7531 的 ports
+ * CPU 口一般是 port@6（并用 fixed-link 绑到 gmac0）
+ */
+&switch {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* 先按常见映射写 label；真机口序不一致再调 label 即可 */
+		port@0 {
+			reg = <0>;
+			label = "wan";
+		};
+
+		port@1 {
+			reg = <1>;
+			label = "lan1";
+		};
+
+		port@2 {
+			reg = <2>;
+			label = "lan2";
+		};
+
+		port@3 {
+			reg = <3>;
+			label = "lan3";
+		};
+
+		/* MT7531 CPU 口 */
+		port@6 {
+			reg = <6>;
+			label = "cpu";
+			ethernet = <&gmac0>;
+			phy-mode = "2500base-x";
+
+			fixed-link {
+				speed = <2500>;
+				full-duplex;
+				pause;
+			};
+		};
+	};
+};
+
+/*
+ * AN8855 子节点（保留 efuse/mdio 结构，但先禁用它的 DSA switch，避免冲突）
  */
 &mfd {
 	efuse {
@@ -122,74 +182,34 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			shift_sel_port0_tx_a: shift-sel-port0-tx-a@c {
-				reg = <0x0c 0x4>;
-			};
+			shift_sel_port0_tx_a: shift-sel-port0-tx-a@c { reg = <0x0c 0x4>; };
+			shift_sel_port0_tx_b: shift-sel-port0-tx-b@10 { reg = <0x10 0x4>; };
+			shift_sel_port0_tx_c: shift-sel-port0-tx-c@14 { reg = <0x14 0x4>; };
+			shift_sel_port0_tx_d: shift-sel-port0-tx-d@18 { reg = <0x18 0x4>; };
 
-			shift_sel_port0_tx_b: shift-sel-port0-tx-b@10 {
-				reg = <0x10 0x4>;
-			};
+			shift_sel_port1_tx_a: shift-sel-port1-tx-a@1c { reg = <0x1c 0x4>; };
+			shift_sel_port1_tx_b: shift-sel-port1-tx-b@20 { reg = <0x20 0x4>; };
+			shift_sel_port1_tx_c: shift-sel-port1-tx-c@24 { reg = <0x24 0x4>; };
+			shift_sel_port1_tx_d: shift-sel-port1-tx-d@28 { reg = <0x28 0x4>; };
 
-			shift_sel_port0_tx_c: shift-sel-port0-tx-c@14 {
-				reg = <0x14 0x4>;
-			};
+			shift_sel_port2_tx_a: shift-sel-port2-tx-a@2c { reg = <0x2c 0x4>; };
+			shift_sel_port2_tx_b: shift-sel-port2-tx-b@30 { reg = <0x30 0x4>; };
+			shift_sel_port2_tx_c: shift-sel-port2-tx-c@34 { reg = <0x34 0x4>; };
+			shift_sel_port2_tx_d: shift-sel-port2-tx-d@38 { reg = <0x38 0x4>; };
 
-			shift_sel_port0_tx_d: shift-sel-port0-tx-d@18 {
-				reg = <0x18 0x4>;
-			};
-
-			shift_sel_port1_tx_a: shift-sel-port1-tx-a@1c {
-				reg = <0x1c 0x4>;
-			};
-
-			shift_sel_port1_tx_b: shift-sel-port1-tx-b@20 {
-				reg = <0x20 0x4>;
-			};
-
-			shift_sel_port1_tx_c: shift-sel-port1-tx-c@24 {
-				reg = <0x24 0x4>;
-			};
-
-			shift_sel_port1_tx_d: shift-sel-port1-tx-d@28 {
-				reg = <0x28 0x4>;
-			};
-
-			shift_sel_port2_tx_a: shift-sel-port2-tx-a@2c {
-				reg = <0x2c 0x4>;
-			};
-
-			shift_sel_port2_tx_b: shift-sel-port2-tx-b@30 {
-				reg = <0x30 0x4>;
-			};
-
-			shift_sel_port2_tx_c: shift-sel-port2-tx-c@34 {
-				reg = <0x34 0x4>;
-			};
-
-			shift_sel_port2_tx_d: shift-sel-port2-tx-d@38 {
-				reg = <0x38 0x4>;
-			};
-
-			shift_sel_port3_tx_a: shift-sel-port3-tx-a@4c {
-				reg = <0x4c 0x4>;
-			};
-
-			shift_sel_port3_tx_b: shift-sel-port3-tx-b@50 {
-				reg = <0x50 0x4>;
-			};
-
-			shift_sel_port3_tx_c: shift-sel-port3-tx-c@54 {
-				reg = <0x54 0x4>;
-			};
-
-			shift_sel_port3_tx_d: shift-sel-port3-tx-d@58 {
-				reg = <0x58 0x4>;
-			};
+			shift_sel_port3_tx_a: shift-sel-port3-tx-a@4c { reg = <0x4c 0x4>; };
+			shift_sel_port3_tx_b: shift-sel-port3-tx-b@50 { reg = <0x50 0x4>; };
+			shift_sel_port3_tx_c: shift-sel-port3-tx-c@54 { reg = <0x54 0x4>; };
+			shift_sel_port3_tx_d: shift-sel-port3-tx-d@58 { reg = <0x58 0x4>; };
 		};
 	};
 
+	/* 关键修改 3：先禁用 AN8855 的 DSA switch */
 	ethernet-switch {
 		compatible = "airoha,an8855-switch";
+		status = "disabled";
+
+		/* 其余属性留着也行（禁用后不会生效），也可全部删掉 */
 		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
 		airoha,ext-surge;
 
@@ -197,47 +217,17 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			/* 端口 label 先按常见 wan/lan1/lan2/lan3，后面你可按实际再调 */
-			port@0 {
-				reg = <0>;
-				label = "wan";
-				phy-mode = "internal";
-				phy-handle = <&internal_phy1>;
-			};
+			port@0 { reg = <0>; label = "wan";  phy-mode = "internal"; phy-handle = <&internal_phy1>; };
+			port@1 { reg = <1>; label = "lan1"; phy-mode = "internal"; phy-handle = <&internal_phy2>; };
+			port@2 { reg = <2>; label = "lan2"; phy-mode = "internal"; phy-handle = <&internal_phy3>; };
+			port@3 { reg = <3>; label = "lan3"; phy-mode = "internal"; phy-handle = <&internal_phy4>; };
 
-			port@1 {
-				reg = <1>;
-				label = "lan1";
-				phy-mode = "internal";
-				phy-handle = <&internal_phy2>;
-			};
-
-			port@2 {
-				reg = <2>;
-				label = "lan2";
-				phy-mode = "internal";
-				phy-handle = <&internal_phy3>;
-			};
-
-			port@3 {
-				reg = <3>;
-				label = "lan3";
-				phy-mode = "internal";
-				phy-handle = <&internal_phy4>;
-			};
-
-			/* CPU 口：2.5G 连接 gmac0 */
 			port@5 {
 				reg = <5>;
 				label = "cpu";
 				ethernet = <&gmac0>;
 				phy-mode = "2500base-x";
-
-				fixed-link {
-					speed = <2500>;
-					full-duplex;
-					pause;
-				};
+				fixed-link { speed = <2500>; full-duplex; pause; };
 			};
 		};
 	};
@@ -249,62 +239,36 @@
 
 		internal_phy1: phy@1 {
 			reg = <1>;
-
-			nvmem-cells = <&shift_sel_port0_tx_a>,
-				      <&shift_sel_port0_tx_b>,
-				      <&shift_sel_port0_tx_c>,
-				      <&shift_sel_port0_tx_d>;
+			nvmem-cells = <&shift_sel_port0_tx_a>, <&shift_sel_port0_tx_b>,
+				     <&shift_sel_port0_tx_c>, <&shift_sel_port0_tx_d>;
 			nvmem-cell-names = "tx_a", "tx_b", "tx_c", "tx_d";
 		};
 
 		internal_phy2: phy@2 {
 			reg = <2>;
-
-			nvmem-cells = <&shift_sel_port1_tx_a>,
-				      <&shift_sel_port1_tx_b>,
-				      <&shift_sel_port1_tx_c>,
-				      <&shift_sel_port1_tx_d>;
+			nvmem-cells = <&shift_sel_port1_tx_a>, <&shift_sel_port1_tx_b>,
+				     <&shift_sel_port1_tx_c>, <&shift_sel_port1_tx_d>;
 			nvmem-cell-names = "tx_a", "tx_b", "tx_c", "tx_d";
 		};
 
 		internal_phy3: phy@3 {
 			reg = <3>;
-
-			nvmem-cells = <&shift_sel_port2_tx_a>,
-				      <&shift_sel_port2_tx_b>,
-				      <&shift_sel_port2_tx_c>,
-				      <&shift_sel_port2_tx_d>;
+			nvmem-cells = <&shift_sel_port2_tx_a>, <&shift_sel_port2_tx_b>,
+				     <&shift_sel_port2_tx_c>, <&shift_sel_port2_tx_d>;
 			nvmem-cell-names = "tx_a", "tx_b", "tx_c", "tx_d";
 		};
 
 		internal_phy4: phy@4 {
 			reg = <4>;
-
-			nvmem-cells = <&shift_sel_port3_tx_a>,
-				      <&shift_sel_port3_tx_b>,
-				      <&shift_sel_port3_tx_c>,
-				      <&shift_sel_port3_tx_d>;
+			nvmem-cells = <&shift_sel_port3_tx_a>, <&shift_sel_port3_tx_b>,
+				     <&shift_sel_port3_tx_c>, <&shift_sel_port3_tx_d>;
 			nvmem-cell-names = "tx_a", "tx_b", "tx_c", "tx_d";
 		};
 	};
 };
 
-&uart0 {
-	status = "okay";
-};
-
-&usb_phy {
-	status = "okay";
-};
-
-&watchdog {
-	status = "okay";
-};
-
-&wifi {
-	status = "okay";
-};
-
-&xhci {
-	status = "okay";
-};
+&uart0 { status = "okay"; };
+&usb_phy { status = "okay"; };
+&watchdog { status = "okay"; };
+&wifi { status = "okay"; };
+&xhci { status = "okay"; };
