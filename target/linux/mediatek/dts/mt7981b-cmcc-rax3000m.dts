@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /*
- * CMCC RAX3000M/RAX3000Me (AN8855 Version)
- * 修复：WiFi EEPROM 读取、LED 引脚、交换机配置
+ * CMCC RAX3000M (AN8855 Version)
+ * 基于原版 MT7531 DTS 修改，严格保留原机 LED/按键/外设定义
  */
 
 /dts-v1/;
-
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
@@ -13,18 +12,18 @@
 #include "mt7981b.dtsi"
 
 / {
-	model = "CMCC RAX3000M";
+	model = "CMCC RAX3000M (AN8855)";
 	compatible = "cmcc,rax3000m", "mediatek,mt7981";
 
 	aliases {
-		serial0 = &uart0;
 		led-boot = &red_led;
 		led-failsafe = &red_led;
 		led-running = &green_led;
 		led-upgrade = &green_led;
+		serial0 = &uart0;
 	};
 
-	chosen {
+	chosen: chosen {
 		bootargs-override = "root=/dev/fit0 rootwait";
 		stdout-path = "serial0:115200n8";
 	};
@@ -51,7 +50,6 @@
 		};
 	};
 
-	/* RAX3000M 的 LED 定义 */
 	gpio-leds {
 		compatible = "gpio-leds";
 
@@ -78,7 +76,7 @@
 &eth {
 	status = "okay";
 
-	/* gmac0 连接到 AN8855 的 CPU 口 (Port 5) */
+	/* AN8855 CPU Port 连接到 gmac0 */
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
@@ -90,16 +88,25 @@
 			pause;
 		};
 	};
+
+	/* gmac1 原版有保留，这里继续保留，虽然 AN8855 模式下可能主要用 gmac0 */
+	gmac1: mac@1 {
+		compatible = "mediatek,eth-mac";
+		reg = <1>;
+		phy-mode = "gmii";
+		phy-handle = <&int_gbe_phy>;
+	};
 };
 
 &mdio_bus {
-	/* 彻底移除 MT7531 节点，只保留 AN8855 */
+	/* 移除 MT7531，替换为 AN8855 MFD */
 	mfd: mfd@1 {
 		compatible = "airoha,an8855-mfd";
 		reg = <1>;
 	};
 };
 
+/* AN8855 专用配置区 */
 &mfd {
 	efuse {
 		compatible = "airoha,an8855-efuse";
@@ -110,7 +117,6 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			/* 交换机校准参数，保留默认 */
 			shift_sel_port0_tx_a: shift-sel-port0-tx-a@c { reg = <0x0c 0x4>; };
 			shift_sel_port0_tx_b: shift-sel-port0-tx-b@10 { reg = <0x10 0x4>; };
 			shift_sel_port0_tx_c: shift-sel-port0-tx-c@14 { reg = <0x14 0x4>; };
@@ -135,8 +141,7 @@
 
 	ethernet-switch {
 		compatible = "airoha,an8855-switch";
-		/* 确保这里是 okay */
-		status = "okay"; 
+		status = "okay";
 		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
 		airoha,ext-surge;
 
@@ -144,34 +149,39 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
+			/* 按照原版逻辑尝试映射，如果不对应请互换 label */
 			port@0 {
 				reg = <0>;
-				label = "wan";
+				label = "lan3";
 				phy-mode = "internal";
 				phy-handle = <&internal_phy1>;
 			};
 
 			port@1 {
 				reg = <1>;
-				label = "lan1";
+				label = "lan2";
 				phy-mode = "internal";
 				phy-handle = <&internal_phy2>;
 			};
 
 			port@2 {
 				reg = <2>;
-				label = "lan2";
+				label = "lan1";
 				phy-mode = "internal";
 				phy-handle = <&internal_phy3>;
 			};
 
+			/* * AN8855 多一个口，通常作为 WAN 
+			 * 如果实机 WAN 口位置不对，把它和上面的 LAN 互换 
+			 */
 			port@3 {
 				reg = <3>;
-				label = "lan3";
+				label = "wan";
 				phy-mode = "internal";
 				phy-handle = <&internal_phy4>;
 			};
 
+			/* AN8855 CPU Port 是 5，MT7981 通常接这里 */
 			port@5 {
 				reg = <5>;
 				label = "cpu";
@@ -222,7 +232,6 @@
 	};
 };
 
-
 &uart0 {
 	status = "okay";
 };
@@ -237,6 +246,11 @@
 
 &wifi {
 	status = "okay";
+	/* * 重要：这里保留了默认配置。
+	 * 如果你的源码中 mt7981b.dtsi 或 common dtsi 里已经定义了 &spi0 和分区，
+	 * 这里就不需要重复写分区表，系统会自动去 NMBM 或 Factory 分区找校准数据。
+	 * 如果编译出来 WiFi 不工作，请检查是否需要在源码中补全分区定义。
+	 */
 };
 
 &xhci {
